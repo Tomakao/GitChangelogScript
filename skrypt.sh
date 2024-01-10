@@ -161,15 +161,23 @@ configure_git() {
         exit 1
     fi
 
-    # Wyodrębnij wszystkie składowe URL poza domeną gitlab.com/github.com.
+    # Wyodrębnij ścieżkę URL dla obu formatów: HTTPS i SSH.
     if [[ $remote_url =~ https?://[^/]+/(.+) ]]; then
+        # Format HTTPS
         url_path=${BASH_REMATCH[1]}
-        url_path=${url_path%.git} # Usuń .git z końca URL, jeśli jest obecny.
-        BASE_URL="${BASE_URL}${url_path}"
+    elif [[ $remote_url =~ git@[^:]+.+) ]]; then
+        # Format SSH
+        url_path=${BASH_REMATCH[1]}
     else
         echo "Failed to extract project path from URL."
         exit 1
     fi
+
+    # Usuń .git z końca URL, jeśli jest obecny.
+    url_path=${url_path%.git}
+
+    # Skonstruuj pełny adres URL bazowy.
+    BASE_URL="${BASE_URL}${url_path}"
 }
 
 # Utworzenie pliku CHANGELOG.md
@@ -251,8 +259,6 @@ process_tag_information() {
     local formatted_tag_date=$(extract_and_format_date "$tag_date_raw")
     local tag_author=$(extract_tag_author $tag)
     local compare_url="${BASE_URL}/-/compare/${next_tag}...${tag}"
-    
-    echo $BASE_URL
 
     echo -e "### [$tag]($compare_url) - $tag_author ($formatted_tag_date)\n" >> CHANGELOG.md
     local commits=$(process_commits "$next_tag..$tag")
