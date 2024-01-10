@@ -165,7 +165,7 @@ configure_git() {
     if [[ $remote_url =~ https?://[^/]+/(.+) ]]; then
         # Format HTTPS
         url_path=${BASH_REMATCH[1]}
-    elif [[ $remote_url =~ git@[^:]+.+) ]]; then
+    elif [[ $remote_url =~ git@[^:]+:(.+) ]]; then
         # Format SSH
         url_path=${BASH_REMATCH[1]}
     else
@@ -189,8 +189,38 @@ generate_changelog_file() {
 # Funkcja fetch_git_tags
 # Ta funkcja pobiera wszystkie tagi z repozytorium git i sortuje je w porządku malejącym.
 fetch_git_tags() {
-    git fetch --tags # Pobiera tagi z zdalnego repozytorium
-    tags=($(git tag -l | sort -Vr)) # Tworzy tablicę tagów posortowanych wersyjnie (od najnowszego)
+    # Pobiera tagi z zdalnego repozytorium
+    git fetch --tags
+
+    # Pobiera najnowszy tag
+    latest_tag=$(git tag -l | sort -Vr | head -n 1)
+
+    # Deklaruje tablicę do przechowywania nowych tagów
+    declare -a new_tags
+    declare -a combined_tags
+
+    # Wywołuje git log z najnowszym tagiem i przetwarza wynik
+    while read line; do
+        # Wyciąga wszystkie tagi z linii
+        tags_line=$(echo $line | grep -o 'tag: [^, )]*' | cut -d ' ' -f 2)
+
+        # Sprawdza, czy istnieją jakieś tagi
+        if [[ ! -z "$tags_line" ]]; then
+            # Łączy tagi znakiem '_'
+            combined_tag=$(echo $tags_line | tr ' ' '_')
+
+            # Dodaje zgrupowane tagi do tablicy combined_tags
+            combined_tags+=("$combined_tag")
+
+            # Dodaje tylko pierwszy tag do tablicy new_tags
+            first_tag=$(echo $tags_line | awk '{print $1}')
+            new_tags+=("$first_tag")
+        fi
+    done < <(git log $latest_tag --pretty=oneline --decorate=short)
+
+    # Eliminuje duplikaty i sortuje obie tablice
+    readarray -t tags < <(printf '%s\n' "${new_tags[@]}" | sort -u -Vr)
+    readarray -t display_tags < <(printf '%s\n' "${combined_tags[@]}" | sort -u -Vr)
 }
 
 # Funkcja extract_and_format_date
@@ -233,7 +263,6 @@ extract_tag_author() {
     echo $tag_author
 }
 
-
 # Przetwarzaj listę commitów
 process_commits() {
     local range=$1
@@ -255,12 +284,13 @@ process_commits() {
 process_tag_information() {
     local tag=$1
     local next_tag=$2
+    local display_tag=${3//_/ }
     local tag_date_raw=$(git show $tag --format=%ai --no-patch)
     local formatted_tag_date=$(extract_and_format_date "$tag_date_raw")
     local tag_author=$(extract_tag_author $tag)
     local compare_url="${BASE_URL}/-/compare/${next_tag}...${tag}"
 
-    echo -e "### [$tag]($compare_url) - $tag_author ($formatted_tag_date)\n" >> CHANGELOG.md
+    echo -e "### [$display_tag]($compare_url) - $tag_author ($formatted_tag_date)\n" >> CHANGELOG.md
     local commits=$(process_commits "$next_tag..$tag")
 
     if [ -n "$commits" ]; then
@@ -275,11 +305,12 @@ process_tag_information() {
 # Przetwarza informacje o ostatnim tagu
 handle_last_tag() {
     local last_tag=$1
+    local display_tag=${2//_/ }
     local tag_date_raw=$(git show $last_tag --format=%ai --no-patch)
     local formatted_tag_date=$(extract_and_format_date "$tag_date_raw")
     local tag_author=$(extract_tag_author $last_tag)
 
-    echo -e "### $last_tag - $tag_author ($formatted_tag_date)\n" >> CHANGELOG.md
+    echo -e "### $display_tag - $tag_author ($formatted_tag_date)\n" >> CHANGELOG.md
     local commits=$(process_commits "$last_tag")
 
     if [ -n "$commits" ]; then
@@ -301,12 +332,13 @@ main() {
     while [ $index -lt $((total_tags-1)) ]; do
         tag=${tags[$index]}
         next_tag=${tags[$((index+1))]}
-        process_tag_information $tag $next_tag
+        display_tag=${display_tags[$index]}
+        process_tag_information $tag $next_tag $display_tag
         index=$((index+1))
     done
 
     # Przetwarzanie ostatniego tagu
-    handle_last_tag ${tags[-1]}
+    handle_last_tag ${tags[-1]} ${display_tags[-1]}
     echo "CHANGELOG.md generated."
 }
 
