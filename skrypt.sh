@@ -2,10 +2,137 @@
 
 #Definicje
 JIRA_BASE_URL="https://rg-plus.atlassian.net/browse"
+INCLUDE_COMMIT_HASHES=false
+COMMIT_LINK_END_LINE=false
+NO_JIRA=false
+NO_GIT_ISSUE_LINK=false
+ALL_COMMITS=false
+NO_PREFIX=false
 
 # Użytkownik może zdefiniować tutaj prefixy, które chce filtrować
-PREFIXES=("fix" "feat" "chore")
-OTHER_PREFIX="other"
+PREFIXES=("fix" "feat" "chore" "other")
+OTHER_PREFIX="other" # dodawany do linijek bez innych prefixów dla odróżenienia i dołączenia do filtrowanych
+
+# Funkcja sprawdzająca, czy można edytować plik bez sudo
+can_edit_without_sudo() {
+    [[ -w "$1" ]]
+}
+
+# Funkcja do sprawdzania dostępności edytora
+choose_editor() {
+    if command -v nano >/dev/null 2>&1; then
+        echo "nano"
+    elif command -v vi >/dev/null 2>&1; then
+        echo "vi"
+    else
+        echo "Nie znaleziono edytora (nano/vi)" >&2
+        exit 1
+    fi
+};
+
+# Funkcja wyświetlająca pomoc
+show_help() {
+    echo -e "\e[1;36mUżycie skryptu i dostępne opcje:\e[0m"
+    echo -e "\e[1;33m-h, --hash\e[0m:\t\t Dodaje skrócone linki commitów do wiadomości."
+    echo -e "\e[1;33m-e, --hash-end\e[0m:\t\t Umieszcza skrócone linki commitów na końcu wiadomości."
+    echo -e "\e[1;33m-j, --no-jira\e[0m:\t\t Usuwa tagi JIRA."
+    echo -e "\e[1;33m-i, --no-issue\e[0m:\t\t Wyłącza dodawanie linków do issue na GitHub."
+    echo -e "\e[1;33m-p, --no-prefix\e[0m:\t Usuwa wszystkie prefiksy z commitów."
+    echo -e "\e[1;33m-a, --all\e[0m:\t\t Przetwarza wszystkie commity, niezależnie od prefiksów."
+    echo -e "\e[1;33m-c, --config\e[0m:\t\t Otwiera skrypt w edytorze do edycji konfiguracji."
+    echo -e "\e[1;32mFlagi można łączyć, np. -a -e -j -p lub -aejp.\e[0m"
+    echo -e "\e[1;32mAby wyświetlić tę pomoc, użyj: --help\e[0m"
+}
+
+# Przetwarzanie argumentów
+while [[ $# -gt 0 ]]; do
+    key="$1"
+
+    if [[ $key == --* ]]; then
+        # Przetwarzanie długich flag
+        case $key in
+            --hash)
+            INCLUDE_COMMIT_HASHES=true
+            ;;
+            --hash-end)
+            INCLUDE_COMMIT_HASHES=true
+            COMMIT_LINK_END_LINE=true
+            ;;
+            --no-jira)
+            NO_JIRA=true
+            ;;
+            --no-issue)
+            NO_GIT_ISSUE_LINK=true
+            ;;
+            --no-prefix)
+            NO_PREFIX=true
+            ;;
+            --all)
+            ALL_COMMITS=true
+            ;;
+            --config)
+            EDITOR=$(choose_editor)
+            if can_edit_without_sudo "$0"; then
+                $EDITOR "$0"
+            else
+                sudo $EDITOR "$0"
+            fi
+            exit 0
+            ;;
+            --help)
+            show_help
+            exit 0
+            ;;
+            *)
+            # Nieznana długa flaga
+            ;;
+        esac
+    elif [[ $key == -* ]]; then
+        length=${#key}
+        # Przetwarzanie łączonych krótkich flag
+        for (( i=1; i<$length; i++ )); do
+            char=${key:$i:1}
+
+            # Przetwarzanie każdej flagi z osobna
+            case $char in
+                h)
+                INCLUDE_COMMIT_HASHES=true
+                ;;
+                e)
+                INCLUDE_COMMIT_HASHES=true
+                COMMIT_LINK_END_LINE=true
+                ;;
+                j)
+                NO_JIRA=true
+                ;;
+                i)
+                NO_GIT_ISSUE_LINK=true
+                ;;
+                p)
+                NO_PREFIX=true
+                ;;
+                a)
+                ALL_COMMITS=true
+                ;;
+                c)
+                EDITOR=$(choose_editor)
+                if can_edit_without_sudo "$0"; then
+                    $EDITOR "$0"
+                else
+                    sudo $EDITOR "$0"
+                fi
+                exit 0
+                ;;
+                *)
+                # Nieznana krótka flaga
+                ;;
+            esac
+        done
+    fi
+    shift # przesuń argumenty
+done
+
+
 
 # Escape'owanie znaków specjalnych w URL dla użycia w wyrażeniach regularnych
 ESCAPED_JIRA_BASE_URL=$(echo "$JIRA_BASE_URL" | sed 's/[\/&]/\\&/g')
@@ -30,7 +157,7 @@ add_other_prefix() {
 filter_commits() {
     local prefixes_regex=$(printf "|%s" "${PREFIXES[@]}")
     prefixes_regex="${prefixes_regex:1}"
-    grep -E "($prefixes_regex)\(.*\):|($prefixes_regex):|$OTHER_PREFIX:"
+    grep -E "($prefixes_regex)\(.*\):|($prefixes_regex):"
 }
 
 # Funkcja format_commits
@@ -43,7 +170,14 @@ format_commits() {
     local prefixes_regex=$(printf "|%s" "${PREFIXES[@]}")
     prefixes_regex="${prefixes_regex:1}"
     sed -E "s/\b($prefixes_regex)\(([^)]+)\):([^:]+)/\2: \3/g" \
-    | sed -E "s/\b(($prefixes_regex):||$OTHER_PREFIX:)//g"
+    | sed -E "s/\b(($prefixes_regex):)//g"
+}
+
+# Funkcja remove_prefixes
+#Ta funkcja służy do usuwania wszystkich napotkanych prefixów gdy NO_PREFIX jest true
+remove_prefixes() {
+    sed -E "s/\b([a-zA-Z]+)\(([^)]+)\):([^:]+)/\2: \3/g" \
+    | sed -E "s/\b([a-zA-Z]+):\s*//g"
 }
 
 # Funkcja trim_spaces
@@ -76,23 +210,31 @@ highlight_identifiers() {
 #    b. Jeśli w linii nie znaleziono żadnych tagów, wypisuje linię bez zmian.
 # Wynikowa linia zawiera oryginalny tekst z ewentualnie dołączonymi na końcu sformatowanymi tagami.
 extract_and_format_tags() {
-    awk '{
+    awk -v no_jira="$NO_JIRA" '{
         line = $0; # Zapisz linię do zmiennej
         gsub(/^ +| +$/, "", line); # Przytnij spacje na początku i końcu
         tags = "";
+
         while (match(line, /\[[A-Z]+-[0-9]+\]/)) { # Znajdź tagi JIRA/GitHub
             tag = substr(line, RSTART, RLENGTH); # Wyodrębnij tag
-            line = substr(line, 1, RSTART-1) substr(line, RSTART+RLENGTH); # Usuń tag z linii
-            tags = tags tag " "; # Dodaj tag do listy tagów
+            if (no_jira == "true") {
+                line = substr(line, 1, RSTART-1) substr(line, RSTART+RLENGTH); # Usuń tag JIRA z linii
+            } else {
+                line = substr(line, 1, RSTART-1) substr(line, RSTART+RLENGTH); # Usuń tag z linii
+                tags = tags tag " "; # Dodaj tag do listy tagów
+            }
         }
+
         gsub(/ +$/, "", tags); # Przytnij spacje na końcu listy tagów
-        if (tags != "") {
+
+        if (no_jira != "true" && tags != "") {
             print line " \\[" tags "\\]"; # Wypisz linię z tagami
         } else {
-            print line; # Wypisz linię bez tagów
+            print line; # Wypisz linię bez tagów JIRA
         }
     }'
 }
+
 
 # Funkcja additional_formatting
 # Ta funkcja wykonuje serię operacji formatujących na tekście wejściowym.
@@ -263,23 +405,99 @@ extract_tag_author() {
     echo $tag_author
 }
 
-# Przetwarzaj listę commitów
-process_commits() {
-    local range=$1
-    local commits=$(git log --pretty=format:"%s" $range \
-        | add_other_prefix \
-        | filter_commits \
-        | format_commits \
-        | trim_spaces \
-        | highlight_identifiers \
-        | process_tags \
-        | add_bullets \
-        | add_jira_links \
-        | add_github_links \
-        | remove_unnecessary_backslashes)
-    echo "$commits"
+# Funkcja format_commit_tags
+# Ta funkcja formatuje linię tekstu zawierającą hash commitu i wiadomość commitu.
+# 1. Dla każdej linii tekstu, wyodrębnia hash commitu i resztę wiadomości.
+# 2. W zależności od wartości zmiennej COMMIT_LINK_END_LINE, hash commitu jest umieszczany na początku lub na końcu linii.
+# 3. Wypisuje sformatowaną linię z hashem commitu na odpowiednim miejscu.
+format_commit_tags() {
+    if [ "$COMMIT_LINK_END_LINE" = true ]; then
+        while read -r line; do
+            # Usuń hash z początku i zapisz go
+            local hash=$(echo "$line" | awk '{print $1}')
+            local message=$(echo "$line" | cut -d ' ' -f 2-)
+
+            # Wypisz najpierw wiadomość, a na końcu hash
+            echo "$message ($hash)"
+        done
+    else
+        while read -r line; do
+            local hash=$(echo "$line" | awk '{print $1}')
+            local message=$(echo "$line" | cut -d ' ' -f 2-)
+
+            # Wypisz najpierw hash, a na końcu wiadomość
+            echo "($hash) $message"
+        done
+    fi
 }
 
+# Funkcja format_commit_hash
+# Ta funkcja formatuje linię tekstu zawierającą pełny hash commitu, przycinając go do pierwszych 7 znaków.
+# 1. Dla każdej linii tekstu, wyodrębnia i skraca hash commitu do 7 znaków.
+# 2. Wypisuje sformatowaną linię z krótkim hashem commitu i oryginalną wiadomością.
+format_commit_hash() {
+    awk '{ print "[" substr($1, 1, 7) "] " substr($0, length($1) + 2) }'
+}
+
+# Funkcja add_commit_links
+# Ta funkcja dodaje linki do commitów na podstawie krótkiego hasha commitu.
+# 1. Przechodzi przez każdą linię tekstu.
+# 2. Zastępuje krótki hash commitu hiperłączem do pełnego commitu na podstawie dostarczonego BASE_URL.
+# 3. Wypisuje sformatowaną linię z linkami do commitów.
+add_commit_links() {
+    perl -pe 's/\[([a-f0-9]{7})\]/\[$1\]('"${BASE_URL//\//\\/}"'\/-\/commit\/\1)/g'
+}
+
+process_commits() {
+    local range=$1
+    local commits
+
+    # Pobieranie logów commitów
+    if [ "$INCLUDE_COMMIT_HASHES" = true ]; then
+        commits=$(git log --pretty=format:"%H %s" $range)
+    else
+        commits=$(git log --pretty=format:"%s" $range)
+    fi
+
+    # Dodawanie prefixu 'other', jeśli nie używamy ALL_COMMITS
+    if [ "$ALL_COMMITS" != true ]; then
+        commits=$(echo "$commits" | add_other_prefix | filter_commits | format_commits)
+    fi
+
+    # Formatowanie commitów
+    commits=$(echo "$commits" \
+        | trim_spaces \
+        | highlight_identifiers \
+        | process_tags)
+        
+    # Usuwanie wszystkich prefixów jeśli NO_PREFIX jest ustawione na true
+    if [ "$NO_PREFIX" = true ]; then
+        commits=$(echo "$commits" | remove_prefixes)
+    fi
+        
+    # Dodawanie linków do commitów, jeśli INCLUDE_COMMIT_HASHES jest ustawione na true
+    if [ "$INCLUDE_COMMIT_HASHES" = true ]; then
+        commits=$(echo "$commits" \
+            | format_commit_hash \
+            | format_commit_tags \
+            | add_commit_links)
+    fi    
+    
+    commits=$(echo "$commits" | add_jira_links)
+
+    if [ "$NO_GIT_ISSUE_LINK" != true ]; then
+        commits=$(echo "$commits" | add_github_links)
+    fi
+    
+    # Dodatkowe formatowanie i dodawanie bulletów
+    commits=$(echo "$commits" \
+        | remove_unnecessary_backslashes \
+        | trim_spaces \
+        | add_bullets)
+
+    echo "$commits"
+}
+        
 # Przetwarza informacje o tagach
 process_tag_information() {
     local tag=$1
@@ -296,7 +514,7 @@ process_tag_information() {
     if [ -n "$commits" ]; then
         echo "$commits" >> CHANGELOG.md
     else
-        echo "* No significant changes" >> CHANGELOG.md
+        echo "*   No significant changes" >> CHANGELOG.md
     fi
 
     echo "" >> CHANGELOG.md
@@ -316,7 +534,7 @@ handle_last_tag() {
     if [ -n "$commits" ]; then
         echo "$commits" >> CHANGELOG.md
     else
-        echo "* No significant changes" >> CHANGELOG.md
+        echo "*   No significant changes" >> CHANGELOG.md
     fi
 }
 
@@ -324,7 +542,7 @@ main() {
     configure_git # Konfiguracja gita
     generate_changelog_file # Generowanie pliku CHANGELOG.md
     fetch_git_tags # Pobieranie tagów gita
-
+	
     index=0
     total_tags=${#tags[@]}
 
