@@ -2,47 +2,85 @@
 
 #Definicje
 JIRA_BASE_URL="https://rg-plus.atlassian.net/browse"
-INCLUDE_COMMIT_HASHES=false
-COMMIT_LINK_END_LINE=false
-NO_JIRA=false
-NO_GIT_ISSUE_LINK=false
-ALL_COMMITS=false
-NO_PREFIX=false
+
+COMMIT_HASHES=true             
+# true - dodaje linki do commitów,      false - wyświetla tylko tekst commitu
+COMMIT_LINK_END_LINE=true      
+# true - przenosi link na koniec linii, false - wyświetla link na początku linii
+JIRA=true                       
+# true - dodaje linki do JIRA,          false - usuwa wszystkie tagi [XYZ-123] JIRA
+JIRA_ON=true
+# true - włącza formatowanie i obsługę JIRA,         false - wyłącza obsługę JIRA
+GIT_ISSUE_LINK=true             
+# true - dodaje linki do issue,         false - nie dodaje linków do issue
+ALL_COMMITS=false               
+# true - wyświetla wszystkie commity,   false - wyświetla tylko filtrowane commity
+PREFIX=true                     
+# true - dodatkowe usuwanie wyłączone,  false - usuwa wszystkie prefiksy
+FETCH_TAGS=true                 
+# true - pobiera tagi z repozytorium,   false - nie pobiera tagów
 
 # Użytkownik może zdefiniować tutaj prefixy, które chce filtrować
-PREFIXES=("fix" "feat" "chore" "other")
-OTHER_PREFIX="other" # dodawany do linijek bez innych prefixów dla odróżenienia i dołączenia do filtrowanych
+PREFIXES=("fix" "feat" "chore" "other") # prefixy dodawane do pliku CHANGELOG.md. Ignorowane gdy ALL_COMMITS=true
+OTHER_PREFIX="other" # dodawany do linijek bez innych prefixów dla odróżnienia i dołączenia do filtrowanych
 
 # Funkcja sprawdzająca, czy można edytować plik bez sudo
 can_edit_without_sudo() {
     [[ -w "$1" ]]
 }
 
+#test
+
 # Funkcja do sprawdzania dostępności edytora
 choose_editor() {
-    if command -v nano >/dev/null 2>&1; then
+    if command -v gedit >/dev/null 2>&1; then
+        echo "gedit"
+    elif command -v kate >/dev/null 2>&1; then
+        echo "kate"
+    elif command -v subl >/dev/null 2>&1; then
+        echo "subl"  # Sublime Text
+    elif command -v atom >/dev/null 2>&1; then
+        echo "atom"
+    elif command -v xed >/dev/null 2>&1; then
+        echo "xed"  # Mint's Xed Editor
+    elif command -v mousepad >/dev/null 2>&1; then
+        echo "mousepad"  # XFCE's Mousepad
+    elif command -v nano >/dev/null 2>&1; then
         echo "nano"
     elif command -v vi >/dev/null 2>&1; then
         echo "vi"
+    elif command -v emacs >/dev/null 2>&1; then
+        echo "emacs"
     else
-        echo "Nie znaleziono edytora (nano/vi)" >&2
+        echo "Nie znaleziono edytora (gedit/kate/subl/atom/xed/mousepad/nano/vi/emacs)" >&2
         exit 1
     fi
-};
+}
 
 # Funkcja wyświetlająca pomoc
 show_help() {
     echo -e "\e[1;36mUżycie skryptu i dostępne opcje:\e[0m"
-    echo -e "\e[1;33m-h, --hash\e[0m:\t\t Dodaje skrócone linki commitów do wiadomości."
-    echo -e "\e[1;33m-e, --hash-end\e[0m:\t\t Umieszcza skrócone linki commitów na końcu wiadomości."
+    echo -e "\e[1;33m+l, --link\e[0m:\t\t Włącza dodawanie skróconych linków commitów do wiadomości."
+    echo -e "\e[1;33m-l, --no-link\e[0m:\t\t Wyłącza dodawanie skróconych linków commitów do wiadomości."
+    echo -e "\e[1;33m+k, --link-koniec\e[0m:\t Włącza umieszczanie skróconych linków commitów na końcu wiadomości."
+    echo -e "\e[1;33m-k, --no-link-koniec\e[0m:\t Wyłącza umieszczanie skróconych linków commitów na końcu wiadomości."
+    echo -e "\e[1;33m+j, --jira\e[0m:\t\t Formatuje i linkuje tagi JIRA."
     echo -e "\e[1;33m-j, --no-jira\e[0m:\t\t Usuwa tagi JIRA."
+    echo -e "\e[1;33m+i, --issue\e[0m:\t\t Włącza dodawanie linków do issue na GitHub."
     echo -e "\e[1;33m-i, --no-issue\e[0m:\t\t Wyłącza dodawanie linków do issue na GitHub."
+    echo -e "\e[1;33m+p, --prefix\e[0m:\t\t Wyłącza usuwanie prefiksów z commitów."
     echo -e "\e[1;33m-p, --no-prefix\e[0m:\t Usuwa wszystkie prefiksy z commitów."
-    echo -e "\e[1;33m-a, --all\e[0m:\t\t Przetwarza wszystkie commity, niezależnie od prefiksów."
-    echo -e "\e[1;33m-c, --config\e[0m:\t\t Otwiera skrypt w edytorze do edycji konfiguracji."
-    echo -e "\e[1;32mFlagi można łączyć, np. -a -e -j -p lub -aejp.\e[0m"
-    echo -e "\e[1;32mAby wyświetlić tę pomoc, użyj: --help\e[0m"
+    echo -e "\e[1;33m+a, --all\e[0m:\t\t Włącza przetwarzanie wszystkich commitów, niezależnie od prefiksów."
+    echo -e "\e[1;33m-a, --no-all\e[0m:\t\t Wyłącza przetwarzanie wszystkich commitów."
+    echo -e "\e[1;33m+f, --fetch\e[0m:\t\t Włącza pobieranie tagów z git."
+    echo -e "\e[1;33m-f, --no-fetch\e[0m:\t\t Wyłącza pobieranie tagów z git."
+    echo -e "\e[1;33m-c, --config\e[0m:\t\t Włącza tryb edycji konfiguracji skryptu."
+    echo -e "\e[1;33m--config <edytor>\e[0m:\t Włącza tryb edycji konfiguracji skryptu z wybranym edytorem."
+    echo -e "\e[1;32mFlagi można łączyć, np. +l +k +j -p -a lub +lkj -pa.\e[0m"
+    echo -e "\e[1;32mAby wyświetlić tę pomoc, użyj: -h, --help\e[0m"
 }
+
+config_requested=false
 
 # Przetwarzanie argumentów
 while [[ $# -gt 0 ]]; do
@@ -51,33 +89,60 @@ while [[ $# -gt 0 ]]; do
     if [[ $key == --* ]]; then
         # Przetwarzanie długich flag
         case $key in
-            --hash)
-            INCLUDE_COMMIT_HASHES=true
+            --link)
+            COMMIT_HASHES=true
             ;;
-            --hash-end)
-            INCLUDE_COMMIT_HASHES=true
+            --link-koniec)
+            COMMIT_HASHES=true
             COMMIT_LINK_END_LINE=true
             ;;
+            --no-link-koniec)
+            COMMIT_HASHES=false
+            COMMIT_LINK_END_LINE=false
+            ;;
+            --no-link)
+            COMMIT_HASHES=false
+            ;;
             --no-jira)
-            NO_JIRA=true
+            JIRA=false
+            ;;
+            --jira)
+            JIRA=true
             ;;
             --no-issue)
-            NO_GIT_ISSUE_LINK=true
+            GIT_ISSUE_LINK=false
+            ;;
+            --issue)
+            GIT_ISSUE_LINK=true
             ;;
             --no-prefix)
-            NO_PREFIX=true
+            PREFIX=false
+            ;;
+            --prefix)
+            PREFIX=true
+            ;;
+            --no-all)
+            ALL_COMMITS=false
             ;;
             --all)
             ALL_COMMITS=true
             ;;
+            --no-fetch)
+            FETCH_TAGS=false
+            ;;
+            --fetch)
+            FETCH_TAGS=true
+            ;;
             --config)
-            EDITOR=$(choose_editor)
-            if can_edit_without_sudo "$0"; then
-                $EDITOR "$0"
-            else
-                sudo $EDITOR "$0"
+            config_requested=true
+            # Sprawdzanie, czy następny argument jest dostępnym edytorem
+            if [[ $# -gt 1 ]]; then
+                next_arg="${@:2:1}"
+                if command -v "$next_arg" >/dev/null 2>&1; then
+                    editor_choice="$next_arg"
+                    shift # Przesunięcie argumentów, ponieważ następny argument został użyty
+                fi
             fi
-            exit 0
             ;;
             --help)
             show_help
@@ -87,40 +152,45 @@ while [[ $# -gt 0 ]]; do
             # Nieznana długa flaga
             ;;
         esac
-    elif [[ $key == -* ]]; then
-        length=${#key}
-        # Przetwarzanie łączonych krótkich flag
-        for (( i=1; i<$length; i++ )); do
-            char=${key:$i:1}
+    elif [[ $key == -* ]] || [[ $key == +* ]]; then
+        sign=${key:0:1}  # Pobierz znak + lub -
+        flags=${key:1}   # Pobierz flagi po znaku
 
-            # Przetwarzanie każdej flagi z osobna
+        # Przetwarzanie łączonych krótkich flag
+        for (( i=0; i<${#flags}; i++ )); do
+            char=${flags:$i:1}
+
+            # Ustawianie wartości zmiennych na podstawie znaku
+            value=false
+            [[ $sign == '+' ]] && value=true
+
             case $char in
-                h)
-                INCLUDE_COMMIT_HASHES=true
+                l)
+                COMMIT_HASHES=$value
                 ;;
-                e)
-                INCLUDE_COMMIT_HASHES=true
-                COMMIT_LINK_END_LINE=true
+                k)
+                COMMIT_LINK_END_LINE=$value
                 ;;
                 j)
-                NO_JIRA=true
+                JIRA=$value
                 ;;
                 i)
-                NO_GIT_ISSUE_LINK=true
+                GIT_ISSUE_LINK=$value
                 ;;
                 p)
-                NO_PREFIX=true
+                PREFIX=$value
                 ;;
                 a)
-                ALL_COMMITS=true
+                ALL_COMMITS=$value
+                ;;
+                f)
+                FETCH_TAGS=$value
                 ;;
                 c)
-                EDITOR=$(choose_editor)
-                if can_edit_without_sudo "$0"; then
-                    $EDITOR "$0"
-                else
-                    sudo $EDITOR "$0"
-                fi
+                config_requested=true
+                ;;
+                h)
+                show_help
                 exit 0
                 ;;
                 *)
@@ -132,7 +202,88 @@ while [[ $# -gt 0 ]]; do
     shift # przesuń argumenty
 done
 
+# Definicje kolorów
+BLUE='\e[36m'
+RED='\e[31m'
+GREEN='\e[32m'
+NO_COLOR='\e[0m'
 
+# Wyświetlanie szczegółowych informacji o konfiguracji
+echo -e "${BLUE}Aktualna konfiguracja:${NO_COLOR}"
+
+if [[ $COMMIT_HASHES == true ]]; then
+    echo -e "(l) Linki commitów: ${GREEN}włączone${NO_COLOR}"
+else
+    echo -e "(l) Linki commitów: ${RED}wyłączone${NO_COLOR}"
+fi
+
+if [[ $COMMIT_LINK_END_LINE == true ]]; then
+    echo -e "(k) Linki commitów na końcu: ${GREEN}włączone${NO_COLOR}"
+else
+    echo -e "(k) Linki commitów na końcu: ${RED}wyłączone${NO_COLOR}"
+fi
+
+if [[ $JIRA == true ]]; then
+    echo -e "(j) Tagi JIRA: ${GREEN}włączone${NO_COLOR}"
+else
+    echo -e "(j) Tagi JIRA: ${RED}wyłączone${NO_COLOR}"
+fi
+
+if [[ $GIT_ISSUE_LINK == true ]]; then
+    echo -e "(i) Linki issue: ${GREEN}włączone${NO_COLOR}"
+else
+    echo -e "(i) Linki issue: ${RED}wyłączone${NO_COLOR}"
+fi
+
+if [[ $PREFIX == false ]]; then
+    echo -e "(p) Usuwanie prefixów: ${GREEN}włączone${NO_COLOR}"
+else
+    echo -e "(p) Usuwanie prefixów: ${RED}wyłączone${NO_COLOR}"
+fi
+
+if [[ $ALL_COMMITS == true ]]; then
+    echo -e "(a) Wszystkie commity: ${GREEN}włączone${NO_COLOR}"
+else
+    echo -e "(a) Wszystkie commity: ${RED}wyłączone${NO_COLOR}"
+fi
+
+if [[ $FETCH_TAGS == true ]]; then
+    echo -e "(f) Pobieranie tagów: ${GREEN}włączone${NO_COLOR}"
+else
+    echo -e "(f) Pobieranie tagów: ${RED}wyłączone${NO_COLOR}"
+fi
+
+edit_config() {
+    # Pytanie o edycję
+    read -p "Czy chcesz edytować konfigurację? (y/n): " answer
+    case $answer in
+        [Yy]*|[Tt]*|[Yy][Ee][Ss]|[Tt][Aa][Kk])
+            # Jeśli wybrano edytor
+            if [[ -n $editor_choice ]]; then
+                EDITOR=$editor_choice
+            else
+                EDITOR=$(choose_editor)
+            fi
+
+            if can_edit_without_sudo "$0"; then
+                $EDITOR "$0"
+            else
+                sudo $EDITOR "$0"
+            fi
+            exit 0
+            ;;
+        *)
+            echo "Wyjście bez edycji."
+            exit 0
+            ;;
+    esac
+}
+
+# Funkcja pytająca o edycję
+if [[ $config_requested == true ]]; then
+    edit_config
+    exit 0
+fi
 
 # Escape'owanie znaków specjalnych w URL dla użycia w wyrażeniach regularnych
 ESCAPED_JIRA_BASE_URL=$(echo "$JIRA_BASE_URL" | sed 's/[\/&]/\\&/g')
@@ -174,7 +325,7 @@ format_commits() {
 }
 
 # Funkcja remove_prefixes
-#Ta funkcja służy do usuwania wszystkich napotkanych prefixów gdy NO_PREFIX jest true
+#Ta funkcja służy do usuwania wszystkich napotkanych prefixów gdy PREFIX jest false
 remove_prefixes() {
     sed -E "s/\b([a-zA-Z]+)\(([^)]+)\):([^:]+)/\2: \3/g" \
     | sed -E "s/\b([a-zA-Z]+):\s*//g"
@@ -210,14 +361,14 @@ highlight_identifiers() {
 #    b. Jeśli w linii nie znaleziono żadnych tagów, wypisuje linię bez zmian.
 # Wynikowa linia zawiera oryginalny tekst z ewentualnie dołączonymi na końcu sformatowanymi tagami.
 extract_and_format_tags() {
-    awk -v no_jira="$NO_JIRA" '{
+    awk -v jira="$JIRA" '{
         line = $0; # Zapisz linię do zmiennej
         gsub(/^ +| +$/, "", line); # Przytnij spacje na początku i końcu
         tags = "";
 
         while (match(line, /\[[A-Z]+-[0-9]+\]/)) { # Znajdź tagi JIRA/GitHub
             tag = substr(line, RSTART, RLENGTH); # Wyodrębnij tag
-            if (no_jira == "true") {
+            if (jira == "false") {
                 line = substr(line, 1, RSTART-1) substr(line, RSTART+RLENGTH); # Usuń tag JIRA z linii
             } else {
                 line = substr(line, 1, RSTART-1) substr(line, RSTART+RLENGTH); # Usuń tag z linii
@@ -227,7 +378,7 @@ extract_and_format_tags() {
 
         gsub(/ +$/, "", tags); # Przytnij spacje na końcu listy tagów
 
-        if (no_jira != "true" && tags != "") {
+        if (jira == "true" && tags != "") {
             print line " \\[" tags "\\]"; # Wypisz linię z tagami
         } else {
             print line; # Wypisz linię bez tagów JIRA
@@ -332,7 +483,12 @@ generate_changelog_file() {
 # Ta funkcja pobiera wszystkie tagi z repozytorium git i sortuje je w porządku malejącym.
 fetch_git_tags() {
     # Pobiera tagi z zdalnego repozytorium
-    git fetch --tags
+    if [ $FETCH_TAGS == true ]; then
+        echo "git fetch --tags..."
+        git fetch --tags
+    fi
+
+    echo "Przetwarzanie tagów..."
 
     # Pobiera najnowszy tag
     latest_tag=$(git tag -l | sort -Vr | head -n 1)
@@ -453,7 +609,7 @@ process_commits() {
     local commits
 
     # Pobieranie logów commitów
-    if [ "$INCLUDE_COMMIT_HASHES" = true ]; then
+    if [ "$COMMIT_HASHES" = true ]; then
         commits=$(git log --pretty=format:"%H %s" $range)
     else
         commits=$(git log --pretty=format:"%s" $range)
@@ -470,22 +626,23 @@ process_commits() {
         | highlight_identifiers \
         | process_tags)
         
-    # Usuwanie wszystkich prefixów jeśli NO_PREFIX jest ustawione na true
-    if [ "$NO_PREFIX" = true ]; then
+    # Usuwanie wszystkich prefixów jeśli PREFIX jest ustawione na false
+    if [ "$PREFIX" = false ]; then
         commits=$(echo "$commits" | remove_prefixes)
     fi
         
-    # Dodawanie linków do commitów, jeśli INCLUDE_COMMIT_HASHES jest ustawione na true
-    if [ "$INCLUDE_COMMIT_HASHES" = true ]; then
+    # Dodawanie linków do commitów, jeśli COMMIT_HASHES jest ustawione na true
+    if [ "$COMMIT_HASHES" = true ]; then
         commits=$(echo "$commits" \
             | format_commit_hash \
             | format_commit_tags \
             | add_commit_links)
     fi    
     
+
     commits=$(echo "$commits" | add_jira_links)
 
-    if [ "$NO_GIT_ISSUE_LINK" != true ]; then
+    if [ "$GIT_ISSUE_LINK" = true ]; then
         commits=$(echo "$commits" | add_github_links)
     fi
     
@@ -506,7 +663,7 @@ process_tag_information() {
     local tag_date_raw=$(git show $tag --format=%ai --no-patch)
     local formatted_tag_date=$(extract_and_format_date "$tag_date_raw")
     local tag_author=$(extract_tag_author $tag)
-    local compare_url="${BASE_URL}/-/compare/${next_tag}...${tag}"
+    local compare_url="${BASE_URL}/compare/${next_tag}...${tag}"
 
     echo -e "### [$display_tag]($compare_url) - $tag_author ($formatted_tag_date)\n" >> CHANGELOG.md
     local commits=$(process_commits "$next_tag..$tag")
@@ -539,6 +696,7 @@ handle_last_tag() {
 }
 
 main() {
+    echo "Sprawdzanie konfiguracji gita"
     configure_git # Konfiguracja gita
     generate_changelog_file # Generowanie pliku CHANGELOG.md
     fetch_git_tags # Pobieranie tagów gita
@@ -551,11 +709,13 @@ main() {
         tag=${tags[$index]}
         next_tag=${tags[$((index+1))]}
         display_tag=${display_tags[$index]}
+        echo "Przetwarzanie commitów $next_tag...$tag dla tagu $display_tag"
         process_tag_information $tag $next_tag $display_tag
         index=$((index+1))
     done
 
     # Przetwarzanie ostatniego tagu
+    echo "Przetwarzanie commitów ostatniego tagu ${display_tags[-1]}"
     handle_last_tag ${tags[-1]} ${display_tags[-1]}
     echo "CHANGELOG.md generated."
 }
